@@ -13,6 +13,7 @@ import (
 	bits "math/bits"
 	binlogdata "vitess.io/vitess/go/vt/proto/binlogdata"
 	query "vitess.io/vitess/go/vt/proto/query"
+	tableacl "vitess.io/vitess/go/vt/proto/tableacl"
 	topodata "vitess.io/vitess/go/vt/proto/topodata"
 	vtrpc "vitess.io/vitess/go/vt/proto/vtrpc"
 )
@@ -126,6 +127,18 @@ func (m *Session) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.TableAclConfig != nil {
+		size, err := m.TableAclConfig.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarint(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0xca
 	}
 	if len(m.AdvisoryLock) > 0 {
 		for k := range m.AdvisoryLock {
@@ -1447,6 +1460,10 @@ func (m *Session) SizeVT() (n int) {
 			mapEntrySize := 1 + len(k) + sov(uint64(len(k))) + 1 + sov(uint64(v))
 			n += mapEntrySize + 2 + sov(uint64(mapEntrySize))
 		}
+	}
+	if m.TableAclConfig != nil {
+		l = m.TableAclConfig.SizeVT()
+		n += 2 + l + sov(uint64(l))
 	}
 	if m.unknownFields != nil {
 		n += len(m.unknownFields)
@@ -2939,6 +2956,42 @@ func (m *Session) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.AdvisoryLock[mapkey] = mapvalue
+			iNdEx = postIndex
+		case 25:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TableAclConfig", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.TableAclConfig == nil {
+				m.TableAclConfig = &tableacl.Config{}
+			}
+			if err := m.TableAclConfig.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

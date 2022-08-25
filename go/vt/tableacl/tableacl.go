@@ -18,21 +18,33 @@ package tableacl
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"github.com/tchap/go-patricia/patricia"
+	"google.golang.org/protobuf/proto"
 	"os"
 	"sort"
 	"strings"
 	"sync"
-
-	"github.com/tchap/go-patricia/patricia"
-	"google.golang.org/protobuf/proto"
 
 	"vitess.io/vitess/go/json2"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/tableacl/acl"
 
 	tableaclpb "vitess.io/vitess/go/vt/proto/tableacl"
+)
+
+type AclAuthorized interface {
+	Authorized(table string, role Role) *ACLResult
+}
+
+// The datatype for CallerID Context Keys
+type aclConfigKey int
+
+var (
+	// internal Context key for Table ACL Config
+	tableAclConfigKey aclConfigKey
 )
 
 // ACLResult embeds an acl.ACL and also tell which table group it belongs to.
@@ -80,8 +92,8 @@ type tableACL struct {
 	factory acl.Factory
 }
 
-// currentTableACL stores current effective ACL information.
-var currentTableACL tableACL
+// staticTableACL stores current effective ACL information.
+var staticTableACL tableACL
 
 // Init initiates table ACLs.
 //
@@ -99,7 +111,7 @@ var currentTableACL tableACL
 //	  ]
 //	}
 func Init(configFile string, aclCB func()) error {
-	return currentTableACL.init(configFile, aclCB)
+	return staticTableACL.init(configFile, aclCB)
 }
 
 func (tacl *tableACL) init(configFile string, aclCB func()) error {
@@ -131,7 +143,13 @@ func (tacl *tableACL) SetCallback(callback func()) {
 
 // InitFromProto inits table ACLs from a proto.
 func InitFromProto(config *tableaclpb.Config) error {
-	return currentTableACL.Set(config)
+	return staticTableACL.Set(config)
+}
+
+func loadFromProto(config *tableaclpb.Config) (AclAuthorized, error) {
+	var dynamicTableAcl tableACL
+	err := dynamicTableAcl.Set(config)
+	return &dynamicTableAcl, err
 }
 
 // load loads configurations from a proto-defined Config
@@ -237,7 +255,7 @@ func ValidateProto(config *tableaclpb.Config) (err error) {
 
 // Authorized returns the list of entities who have the specified role on a tablel.
 func Authorized(table string, role Role) *ACLResult {
-	return currentTableACL.Authorized(table, role)
+	return staticTableACL.Authorized(table, role)
 }
 
 func (tacl *tableACL) Authorized(table string, role Role) *ACLResult {
@@ -271,7 +289,7 @@ func (tacl *tableACL) Authorized(table string, role Role) *ACLResult {
 
 // GetCurrentConfig returns a copy of current tableacl configuration.
 func GetCurrentConfig() *tableaclpb.Config {
-	return currentTableACL.Config()
+	return staticTableACL.Config()
 }
 
 func (tacl *tableACL) Config() *tableaclpb.Config {
@@ -316,4 +334,21 @@ func GetCurrentACLFactory() (acl.Factory, error) {
 		return aclFactory, nil
 	}
 	return nil, fmt.Errorf("aclFactory for given default: %s is not found", defaultACL)
+}
+
+// NewContext adds the provided Table ACL config(tableaclpb.Config) into the Context
+func NewContext(ctx context.Context, config *tableaclpb.Config) context.Context {
+	aclAuthorized, _ := loadFromProto(config)
+	ctx = context.WithValue(ctx, tableAclConfigKey, aclAuthorized)
+	return ctx
+}
+
+// TableAclConfigFromContext returns the Table ACL config(tableaclpb.Config)
+// stored in the Context, if any
+func TableAclConfigFromContext(ctx context.Context) AclAuthorized {
+	taclConfig, ok := ctx.Value(tableAclConfigKey).(AclAuthorized)
+	if ok && taclConfig != nil {
+		return taclConfig
+	}
+	return nil
 }

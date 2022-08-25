@@ -25,6 +25,7 @@ option java_package = "io.vitess.proto";
 
 import "binlogdata.proto";
 import "query.proto";
+import "tableacl.proto";
 import "topodata.proto";
 import "vtrpc.proto";
 
@@ -149,6 +150,8 @@ message Session {
   bool enable_system_settings = 23;
 
   map<string, int64> advisory_lock = 24;
+
+  tableacl.Config table_acl_config = 25;
 }
 
 // ReadAfterWrite contains information regarding gtid set and timeout

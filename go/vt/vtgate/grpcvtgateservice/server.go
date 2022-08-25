@@ -19,9 +19,10 @@ package grpcvtgateservice
 
 import (
 	"context"
+	"github.com/go-kit/kit/transport/grpc"
+	"vitess.io/vitess/go/vt/tableacl"
 
 	"github.com/spf13/pflag"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
@@ -35,6 +36,7 @@ import (
 
 	binlogdatapb "vitess.io/vitess/go/vt/proto/binlogdata"
 	querypb "vitess.io/vitess/go/vt/proto/query"
+	tableaclpb "vitess.io/vitess/go/vt/proto/tableacl"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 	vtgatepb "vitess.io/vitess/go/vt/proto/vtgate"
 	vtgateservicepb "vitess.io/vitess/go/vt/proto/vtgateservice"
@@ -45,10 +47,14 @@ const (
 	unsecureClient = "unsecure_grpc_client"
 )
 
-var useEffective bool
+var (
+	useEffective                bool
+	usePerSessionTableAClConfig bool
+)
 
 func registerFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&useEffective, "grpc_use_effective_callerid", false, "If set, and SSL is not used, will set the immediate caller id from the effective caller id's principal.")
+	fs.BoolVar(&usePerSessionTableAClConfig, "grpc_use_per_session_table_acl_config", false, "If set, Table ACL configuration is loaded from the Session and not the configured ACL file.")
 }
 
 func init() {
@@ -105,10 +111,23 @@ func withCallerIDContext(ctx context.Context, effectiveCallerID *vtrpcpb.CallerI
 		&querypb.VTGateCallerID{Username: immediate, Groups: dnsNames})
 }
 
+func withTableAclContext(ctx context.Context, tableAclConfig *tableaclpb.Config) context.Context {
+	if !usePerSessionTableAClConfig {
+		return ctx
+	}
+
+	if len(tableAclConfig.TableGroups) == 0 {
+		return ctx
+	}
+
+	return tableacl.NewContext(ctx, tableAclConfig)
+}
+
 // Execute is the RPC version of vtgateservice.VTGateService method
 func (vtg *VTGate) Execute(ctx context.Context, request *vtgatepb.ExecuteRequest) (response *vtgatepb.ExecuteResponse, err error) {
 	defer vtg.server.HandlePanic(&err)
 	ctx = withCallerIDContext(ctx, request.CallerId)
+	ctx = withTableAclContext(ctx, request.Session.TableAclConfig)
 
 	// Handle backward compatibility.
 	session := request.Session
@@ -127,6 +146,7 @@ func (vtg *VTGate) Execute(ctx context.Context, request *vtgatepb.ExecuteRequest
 func (vtg *VTGate) ExecuteBatch(ctx context.Context, request *vtgatepb.ExecuteBatchRequest) (response *vtgatepb.ExecuteBatchResponse, err error) {
 	defer vtg.server.HandlePanic(&err)
 	ctx = withCallerIDContext(ctx, request.CallerId)
+	ctx = withTableAclContext(ctx, request.Session.TableAclConfig)
 	sqlQueries := make([]string, len(request.Queries))
 	bindVars := make([]map[string]*querypb.BindVariable, len(request.Queries))
 	for queryNum, query := range request.Queries {
@@ -150,7 +170,7 @@ func (vtg *VTGate) ExecuteBatch(ctx context.Context, request *vtgatepb.ExecuteBa
 func (vtg *VTGate) StreamExecute(request *vtgatepb.StreamExecuteRequest, stream vtgateservicepb.Vitess_StreamExecuteServer) (err error) {
 	defer vtg.server.HandlePanic(&err)
 	ctx := withCallerIDContext(stream.Context(), request.CallerId)
-
+	ctx = withTableAclContext(stream.Context(), request.Session.TableAclConfig)
 	// Handle backward compatibility.
 	session := request.Session
 	if session == nil {
@@ -171,6 +191,7 @@ func (vtg *VTGate) StreamExecute(request *vtgatepb.StreamExecuteRequest, stream 
 func (vtg *VTGate) Prepare(ctx context.Context, request *vtgatepb.PrepareRequest) (response *vtgatepb.PrepareResponse, err error) {
 	defer vtg.server.HandlePanic(&err)
 	ctx = withCallerIDContext(ctx, request.CallerId)
+	ctx = withTableAclContext(ctx, request.Session.TableAclConfig)
 
 	session := request.Session
 	if session == nil {
@@ -189,6 +210,7 @@ func (vtg *VTGate) Prepare(ctx context.Context, request *vtgatepb.PrepareRequest
 func (vtg *VTGate) CloseSession(ctx context.Context, request *vtgatepb.CloseSessionRequest) (response *vtgatepb.CloseSessionResponse, err error) {
 	defer vtg.server.HandlePanic(&err)
 	ctx = withCallerIDContext(ctx, request.CallerId)
+	ctx = withTableAclContext(ctx, request.Session.TableAclConfig)
 
 	session := request.Session
 	if session == nil {
@@ -204,6 +226,7 @@ func (vtg *VTGate) CloseSession(ctx context.Context, request *vtgatepb.CloseSess
 func (vtg *VTGate) ResolveTransaction(ctx context.Context, request *vtgatepb.ResolveTransactionRequest) (response *vtgatepb.ResolveTransactionResponse, err error) {
 	defer vtg.server.HandlePanic(&err)
 	ctx = withCallerIDContext(ctx, request.CallerId)
+	//ctx = withTableAclContext(ctx, request.Session.TableAclConfig)
 	vtgErr := vtg.server.ResolveTransaction(ctx, request.Dtid)
 	response = &vtgatepb.ResolveTransactionResponse{}
 	if vtgErr == nil {
@@ -216,6 +239,7 @@ func (vtg *VTGate) ResolveTransaction(ctx context.Context, request *vtgatepb.Res
 func (vtg *VTGate) VStream(request *vtgatepb.VStreamRequest, stream vtgateservicepb.Vitess_VStreamServer) (err error) {
 	defer vtg.server.HandlePanic(&err)
 	ctx := withCallerIDContext(stream.Context(), request.CallerId)
+	//ctx = withTableAclContext(stream.Context(), request.Session.TableAclConfig)
 
 	// For backward compatibility.
 	// The mysql query equivalent has logic to use topodatapb.TabletType_PRIMARY if tablet_type is not set.
