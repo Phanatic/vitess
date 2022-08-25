@@ -99,18 +99,14 @@ func (ep *TabletPlan) buildAuthorized() {
 // buildAuthorizedWithCustomAClConfig builds 'Authorized', which is the runtime part for 'Permissions'.
 func (ep *TabletPlan) buildAuthorizedWithCustomAClConfig(ctx context.Context) {
 	ep.Authorized = make([]*tableacl.ACLResult, len(ep.Permissions))
-	customAclConfig := tableacl.TableAclConfigFromContext(ctx)
+	customAclAuthorizer := tableacl.AclAuthorizerFromContext(ctx)
 	for i, perm := range ep.Permissions {
-		if customAclConfig != nil {
-			// TODO : This seems to be resetting the ACL config used for all queries
-			// need to refactor this so we can generate a table ACL config that can be used
-			// per query when we build the plan below.
-			ep.Authorized[i] = customAclConfig.Authorized(perm.TableName, perm.Role)
+		if customAclAuthorizer != nil {
+			ep.Authorized[i] = customAclAuthorizer.Authorized(perm.TableName, perm.Role)
 		} else {
 			ep.Authorized[i] = tableacl.Authorized(perm.TableName, perm.Role)
 		}
 	}
-
 }
 
 // _______________________________________________

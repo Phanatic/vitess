@@ -19,6 +19,7 @@ package grpcvtgateservice
 
 import (
 	"context"
+
 	"github.com/go-kit/kit/transport/grpc"
 	"vitess.io/vitess/go/vt/tableacl"
 

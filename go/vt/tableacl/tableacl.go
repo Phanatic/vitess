@@ -35,7 +35,7 @@ import (
 	tableaclpb "vitess.io/vitess/go/vt/proto/tableacl"
 )
 
-type AclAuthorized interface {
+type AclAuthorizer interface {
 	Authorized(table string, role Role) *ACLResult
 }
 
@@ -146,7 +146,7 @@ func InitFromProto(config *tableaclpb.Config) error {
 	return staticTableACL.Set(config)
 }
 
-func loadFromProto(config *tableaclpb.Config) (AclAuthorized, error) {
+func loadFromProto(config *tableaclpb.Config) (AclAuthorizer, error) {
 	var dynamicTableAcl tableACL
 	err := dynamicTableAcl.Set(config)
 	return &dynamicTableAcl, err
@@ -343,10 +343,10 @@ func NewContext(ctx context.Context, config *tableaclpb.Config) context.Context 
 	return ctx
 }
 
-// TableAclConfigFromContext returns the Table ACL config(tableaclpb.Config)
+// AclAuthorizerFromContext returns the ACL Authorizer(tableaclpb.AclAuthorizer)
 // stored in the Context, if any
-func TableAclConfigFromContext(ctx context.Context) AclAuthorized {
-	taclConfig, ok := ctx.Value(tableAclConfigKey).(AclAuthorized)
+func AclAuthorizerFromContext(ctx context.Context) AclAuthorizer {
+	taclConfig, ok := ctx.Value(tableAclConfigKey).(AclAuthorizer)
 	if ok && taclConfig != nil {
 		return taclConfig
 	}
