@@ -41,23 +41,45 @@ type ACLResult struct {
 	GroupName string
 }
 
-type aclEntry struct {
-	tableNameOrPrefix string
-	groupName         string
-	acl               map[Role]acl.ACL
+type columnAclEntry struct {
+	columnNameOrPrefix string
+	groupName          string
+	matchesAll bool
+	acl                map[Role]acl.ACL
 }
 
-type aclEntries []aclEntry
+type columnAclEntries []columnAclEntry
 
-func (aes aclEntries) Len() int {
+func (aes columnAclEntries) Len() int {
 	return len(aes)
 }
 
-func (aes aclEntries) Less(i, j int) bool {
+func (aes columnAclEntries) Less(i, j int) bool {
+	return aes[i].columnNameOrPrefix < aes[j].columnNameOrPrefix
+}
+
+func (aes columnAclEntries) Swap(i, j int) {
+	aes[i], aes[j] = aes[j], aes[i]
+}
+
+type tableAclEntry struct {
+	tableNameOrPrefix string
+	groupName         string
+	acl               map[Role]acl.ACL
+	columns           columnAclEntries
+}
+
+type tableAclEntries []tableAclEntry
+
+func (aes tableAclEntries) Len() int {
+	return len(aes)
+}
+
+func (aes tableAclEntries) Less(i, j int) bool {
 	return aes[i].tableNameOrPrefix < aes[j].tableNameOrPrefix
 }
 
-func (aes aclEntries) Swap(i, j int) {
+func (aes tableAclEntries) Swap(i, j int) {
 	aes[i], aes[j] = aes[j], aes[i]
 }
 
@@ -72,7 +94,7 @@ var defaultACL string
 type tableACL struct {
 	// mutex protects entries, config, and callback
 	sync.RWMutex
-	entries aclEntries
+	entries tableAclEntries
 	config  *tableaclpb.Config
 	// callback is executed on successful reload.
 	callback func()
@@ -117,7 +139,7 @@ func (tacl *tableACL) init(configFile string, aclCB func()) error {
 		// try to parse tableacl as json file
 		if jsonErr := json2.Unmarshal(data, config); jsonErr != nil {
 			log.Infof("unable to parse tableACL config file as a protobuf or json file.  protobuf err: %v  json err: %v", err, jsonErr)
-			return fmt.Errorf("unable to unmarshal Table ACL data: %s", data)
+			return fmt.Errorf("unable to unmarshal Table ACL data: %s protobuf err: %v  json err: %v", data, err, jsonErr)
 		}
 	}
 	return tacl.Set(config)
@@ -136,11 +158,11 @@ func InitFromProto(config *tableaclpb.Config) error {
 
 // load loads configurations from a proto-defined Config
 // If err is nil, then entries is guaranteed to be non-nil (though possibly empty).
-func load(config *tableaclpb.Config, newACL func([]string) (acl.ACL, error)) (entries aclEntries, err error) {
+func load(config *tableaclpb.Config, newACL func([]string) (acl.ACL, error)) (tableEntries tableAclEntries, err error) {
 	if err := ValidateProto(config); err != nil {
 		return nil, err
 	}
-	entries = aclEntries{}
+	tableEntries = tableAclEntries{}
 	for _, group := range config.TableGroups {
 		readers, err := newACL(group.Readers)
 		if err != nil {
@@ -154,10 +176,23 @@ func load(config *tableaclpb.Config, newACL func([]string) (acl.ACL, error)) (en
 		if err != nil {
 			return nil, err
 		}
+		if len(group.ColumnGroups) > 0 {
+			if len(group.TableNamesOrPrefixes) > 1 {
+				// cannot use multiple table names when authorizing column access.
+				return tableEntries, fmt.Errorf("cannot use multiple table names [%v] when authorizing column access", group.TableNamesOrPrefixes)
+			}
+		}
+
+		//fmt.Printf("\n\t loading column groups: %v \n",group.ColumnGroups)
+		columnEntries, err := setColumnGroups(group.ColumnGroups, newACL)
+		if err != nil {
+			return tableEntries, err
+		}
 		for _, tableNameOrPrefix := range group.TableNamesOrPrefixes {
-			entries = append(entries, aclEntry{
+			tableEntries = append(tableEntries, tableAclEntry{
 				tableNameOrPrefix: tableNameOrPrefix,
 				groupName:         group.Name,
+				columns:           columnEntries,
 				acl: map[Role]acl.ACL{
 					READER: readers,
 					WRITER: writers,
@@ -166,8 +201,40 @@ func load(config *tableaclpb.Config, newACL func([]string) (acl.ACL, error)) (en
 			})
 		}
 	}
-	sort.Sort(entries)
-	return entries, nil
+	sort.Sort(tableEntries)
+	return tableEntries, nil
+}
+
+func setColumnGroups(groups []*tableaclpb.ColumnGroupSpec,newACL func([]string) (acl.ACL, error)) (columnEntries columnAclEntries, err error) {
+
+	columnEntries = columnAclEntries{}
+	for _, group := range groups {
+		readers, err := newACL(group.Readers)
+		if err != nil {
+			return nil, err
+		}
+		writers, err := newACL(group.Writers)
+		if err != nil {
+			return nil, err
+		}
+		admins, err := newACL(group.Admins)
+		if err != nil {
+			return nil, err
+		}
+		for _, columnNameOrPrefix := range group.ColumnNamesOrPrefixes {
+			columnEntries = append(columnEntries, columnAclEntry{
+				columnNameOrPrefix: columnNameOrPrefix,
+				groupName:          group.Name,
+				acl: map[Role]acl.ACL{
+					READER: readers,
+					WRITER: writers,
+					ADMIN:  admins,
+				},
+			})
+		}
+	}
+	sort.Sort(columnEntries)
+	return columnEntries, nil
 }
 
 func (tacl *tableACL) aclFactory() (acl.Factory, error) {
@@ -235,12 +302,12 @@ func ValidateProto(config *tableaclpb.Config) (err error) {
 	return nil
 }
 
-// Authorized returns the list of entities who have the specified role on a tablel.
-func Authorized(table string, role Role) *ACLResult {
-	return currentTableACL.Authorized(table, role)
+// Authorized returns the list of entities who have the specified role on a table.
+func Authorized(table string, role Role, column string) *ACLResult {
+	return currentTableACL.Authorized(table, role, column)
 }
 
-func (tacl *tableACL) Authorized(table string, role Role) *ACLResult {
+func (tacl *tableACL) Authorized(table string, role Role, column string) *ACLResult {
 	tacl.RLock()
 	defer tacl.RUnlock()
 	start := 0
@@ -249,15 +316,56 @@ func (tacl *tableACL) Authorized(table string, role Role) *ACLResult {
 		mid := start + (end-start)/2
 		val := tacl.entries[mid].tableNameOrPrefix
 		if table == val || (strings.HasSuffix(val, "%") && strings.HasPrefix(table, val[:len(val)-1])) {
-			acl, ok := tacl.entries[mid].acl[role]
+			aclEntry := tacl.entries[mid]
+			acl, ok := aclEntry.acl[role]
 			if ok {
+				// by default, if no column access policy is defined,
+				// then access to table also means access to column.
+				// This preserves backwards compatibility with ACL policies prior
+				// to introduction of column level ACLs.
+				if len(aclEntry.columns) > 0 && column != "" {
+					//fmt.Println("checking for access to column")
+					// if a column level ACL policy is defined for a given
+					// table group, then we will assert the column level ACLs.
+					return AuthorizedForColumnAccess(aclEntry, role, column)
+				}
+
 				return &ACLResult{
 					ACL:       acl,
-					GroupName: tacl.entries[mid].groupName,
+					GroupName: aclEntry.groupName,
 				}
 			}
 			break
 		} else if table < val {
+			end = mid
+		} else {
+			start = mid + 1
+		}
+	}
+	return &ACLResult{
+		ACL:       acl.DenyAllACL{},
+		GroupName: "",
+	}
+}
+
+func AuthorizedForColumnAccess(tableAclEntry tableAclEntry, role Role, column string) *ACLResult {
+	fmt.Println("in AuthorizedForColumnAccess")
+	start := 0
+	end := len(tableAclEntry.columns)
+	for start < end {
+		mid := start + (end-start)/2
+		val := tableAclEntry.columns[mid].columnNameOrPrefix
+		if column == val || (strings.HasSuffix(val, "%") && strings.HasPrefix(column, val[:len(val)-1])) {
+			aclEntry := tableAclEntry.columns[mid]
+			acl, ok := aclEntry.acl[role]
+			if ok {
+				return &ACLResult{
+					ACL:       acl,
+					GroupName: aclEntry.groupName,
+				}
+			}
+			break
+		} else if column < val {
 			end = mid
 		} else {
 			start = mid + 1

@@ -18,6 +18,7 @@ package tableacl
 
 import (
 	"errors"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"os"
 	"reflect"
@@ -74,9 +75,63 @@ func TestInitWithValidConfig(t *testing.T) {
 	}
 }
 
+var columnAclJSON = `{
+"table_groups":[
+	{"name":"group01","table_names_or_prefixes":["test_table"],"readers":["vt"],"writers":["vt"],
+		"column_groups":[{"column_names_or_prefixes":["id"],"readers":["vt_column_reader"],"writers":["vt_column_writer"]}]
+	}
+]
+}`
+
+func TestInitWithValidConfig_IncludesColumns(t *testing.T) {
+	tacl := tableACL{factory: &simpleacl.Factory{}}
+	f, err := os.CreateTemp("", "tableacl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := io.WriteString(f, columnAclJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tacl.init(f.Name(), func() {}); err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, 1, len(tacl.entries))
+	assert.Equal(t, 1, len(tacl.entries[0].columns))
+}
+
+const multipleTableNamesColumnAcl = `{
+"table_groups":[
+	{"name":"group01","table_names_or_prefixes":["test_table", "another_table_name"],"readers":["vt"],"writers":["vt"],
+	"column_groups":[{"column_names_or_prefixes":["id"],"readers":["vt"],"writers":["vt"]}]}
+]
+}`
+
+func TestInitWithValidConfig_IncludesColumns_MultipleTableNames(t *testing.T) {
+	tacl := tableACL{factory: &simpleacl.Factory{}}
+	f, err := os.CreateTemp("", "tableacl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := io.WriteString(f, multipleTableNamesColumnAcl); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tacl.init(f.Name(), func() {}); err != nil {
+		assert.ErrorContains(t, err, "cannot use multiple table names [[test_table another_table_name]] when authorizing column access")
+	}
+}
+
 func TestInitFromProto(t *testing.T) {
 	tacl := tableACL{factory: &simpleacl.Factory{}}
-	readerACL := tacl.Authorized("my_test_table", READER)
+	readerACL := tacl.Authorized("my_test_table", READER, "")
 	want := &ACLResult{ACL: acl.DenyAllACL{}, GroupName: ""}
 	if !reflect.DeepEqual(readerACL, want) {
 		t.Fatalf("tableacl has not been initialized, got: %v, want: %v", readerACL, want)
@@ -94,11 +149,11 @@ func TestInitFromProto(t *testing.T) {
 	if got := tacl.Config(); !proto.Equal(got, config) {
 		t.Fatalf("GetCurrentConfig() = %v, want: %v", got, config)
 	}
-	readerACL = tacl.Authorized("unknown_table", READER)
+	readerACL = tacl.Authorized("unknown_table", READER, "")
 	if !reflect.DeepEqual(readerACL, want) {
 		t.Fatalf("there is no config for unknown_table, should deny by default")
 	}
-	readerACL = tacl.Authorized("test_table", READER)
+	readerACL = tacl.Authorized("test_table", READER, "")
 	if !readerACL.IsMember(&querypb.VTGateCallerID{Username: "vt"}) {
 		t.Fatalf("user: vt should have reader permission to table: test_table")
 	}
@@ -176,12 +231,113 @@ func TestTableACLAuthorize(t *testing.T) {
 		t.Fatalf("InitFromProto(<data>) = %v, want: nil", err)
 	}
 
-	readerACL := tacl.Authorized("test_data_any", READER)
+	readerACL := tacl.Authorized("test_data_any", READER, "")
 	if !readerACL.IsMember(&querypb.VTGateCallerID{Username: "u1"}) {
 		t.Fatalf("user u1 should have reader permission to table test_data_any")
 	}
 	if !readerACL.IsMember(&querypb.VTGateCallerID{Username: "u2"}) {
 		t.Fatalf("user u2 should have reader permission to table test_data_any")
+	}
+}
+func TestTableACLAuthorizeColumns(t *testing.T) {
+	tacl := tableACL{factory: &simpleacl.Factory{}}
+	config := &tableaclpb.Config{
+		TableGroups: []*tableaclpb.TableGroupSpec{
+			{
+				Name:                 "group01",
+				TableNamesOrPrefixes: []string{"test_music"},
+				Readers:              []string{"u1", "u2"},
+				Writers:              []string{"u1", "u3"},
+				Admins:               []string{"u1"},
+				ColumnGroups: []*tableaclpb.ColumnGroupSpec{
+					{
+						Name:                  "all-columns-access-group",
+						ColumnNamesOrPrefixes: []string{"%"},
+						Readers:               []string{"u1", "u2"},
+						Writers:               []string{"u1", "u3"},
+						Admins:                []string{"u1"},
+					},
+				},
+			},
+			{
+				Name:                 "group02",
+				TableNamesOrPrefixes: []string{"test_music_named_columns"},
+				Readers:              []string{"u1", "u2"},
+				Writers:              []string{"u1", "u3"},
+				Admins:               []string{"u1"},
+				ColumnGroups: []*tableaclpb.ColumnGroupSpec{
+					{
+						Name:                  "all-columns-access-group",
+						ColumnNamesOrPrefixes: []string{"id", "name", "customer_id"},
+						Readers:               []string{"u1", "u2"},
+						Writers:               []string{"u1", "u3"},
+						Admins:                []string{"u1"},
+					},
+				},
+			},
+			{
+				Name:                 "group02",
+				TableNamesOrPrefixes: []string{"test_music_only_read_id"},
+				Readers:              []string{"u1", "u2"},
+				Writers:              []string{"u1", "u3"},
+				Admins:               []string{"u1"},
+				ColumnGroups: []*tableaclpb.ColumnGroupSpec{
+					{
+						Name:                  "id-column-access-group",
+						ColumnNamesOrPrefixes: []string{"id"},
+						Readers:               []string{"u1", "u2"},
+						Writers:               []string{"u1", "u3"},
+						Admins:                []string{"u1"},
+					},
+				},
+			},
+		},
+	}
+	if err := tacl.Set(config); err != nil {
+		t.Fatalf("InitFromProto(<data>) = %v, want: nil", err)
+	}
+
+	columnNames := []string{"id", "name", "customer_id"}
+	for _, name := range columnNames {
+		readerACL := tacl.Authorized("test_music", READER, name)
+		if !readerACL.IsMember(&querypb.VTGateCallerID{Username: "u1"}) {
+			t.Fatalf("user u1 should have reader permission to column %q in table test_music", name)
+		}
+		if !readerACL.IsMember(&querypb.VTGateCallerID{Username: "u2"}) {
+			t.Fatalf("user u2 should have reader permission to column %q in table test_music", name)
+		}
+		if readerACL.IsMember(&querypb.VTGateCallerID{Username: "u3"}) {
+			t.Fatalf("user u3 should NOT have reader permission to column %q in table test_music", name)
+		}
+
+		testMusicNamedColumnsReaderACL := tacl.Authorized("test_music_named_columns", READER, name)
+		if !testMusicNamedColumnsReaderACL.IsMember(&querypb.VTGateCallerID{Username: "u1"}) {
+			t.Fatalf("user u1 should have reader permission to column %q in table test_music_named_columns", name)
+		}
+		if !testMusicNamedColumnsReaderACL.IsMember(&querypb.VTGateCallerID{Username: "u2"}) {
+			t.Fatalf("user u2 should have reader permission to column %q in table test_music_named_columns", name)
+		}
+		if testMusicNamedColumnsReaderACL.IsMember(&querypb.VTGateCallerID{Username: "u3"}) {
+			t.Fatalf("user u3 should NOT have reader permission to column %q in table test_music_named_columns", name)
+		}
+
+		canOnlyReadIDColumnReaderACL := tacl.Authorized("test_music_only_read_id", READER, name)
+		canReadColumn := name == "id"
+		verb := "should"
+		if !canReadColumn {
+			verb = "should NOT"
+		}
+
+		if canReadColumn != canOnlyReadIDColumnReaderACL.IsMember(&querypb.VTGateCallerID{Username: "u1"}) {
+			t.Fatalf("user u1 %v have reader permission to column %q in table test_music_named_columns", verb, name)
+		}
+		if canReadColumn != canOnlyReadIDColumnReaderACL.IsMember(&querypb.VTGateCallerID{Username: "u2"}) {
+			t.Fatalf("user u2 %v have reader permission to column %q in table test_music_named_columns", verb, name)
+		}
+
+		if canOnlyReadIDColumnReaderACL.IsMember(&querypb.VTGateCallerID{Username: "u3"}) {
+			t.Fatalf("user u3 should NOT have reader permission to column %q in table test_music_named_columns", name)
+		}
 	}
 }
 

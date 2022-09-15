@@ -92,7 +92,7 @@ func (ep *TabletPlan) Stats() (queryCount uint64, duration, mysqlTime time.Durat
 func (ep *TabletPlan) buildAuthorized() {
 	ep.Authorized = make([]*tableacl.ACLResult, len(ep.Permissions))
 	for i, perm := range ep.Permissions {
-		ep.Authorized[i] = tableacl.Authorized(perm.TableName, perm.Role)
+		ep.Authorized[i] = tableacl.Authorized(perm.TableName, perm.Role, nil)
 	}
 }
 
