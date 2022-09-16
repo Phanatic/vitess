@@ -862,6 +862,215 @@ func TestQueryExecutorTableAcl(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorTableColumnAclAllowed(t *testing.T) {
+	aclName := fmt.Sprintf("simpleacl-test-%d", rand.Int63())
+	tableacl.Register(aclName, &simpleacl.Factory{})
+	tableacl.SetDefaultACL(aclName)
+	db := setUpQueryExecutorTest(t)
+	defer db.Close()
+	query := "select * from test_table limit 1000"
+	want := &sqltypes.Result{
+		Fields: getTestTableFields(),
+	}
+	db.AddQuery(query, want)
+	db.AddQuery("select id from test_table where 1 != 1", &sqltypes.Result{
+		Fields: getTestTableFields(),
+	})
+
+	username := "u2"
+	callerID := &querypb.VTGateCallerID{
+		Username: username,
+	}
+	ctx := callerid.NewContext(context.Background(), nil, callerID)
+	config := &tableaclpb.Config{
+		TableGroups: []*tableaclpb.TableGroupSpec{{
+			Name:                 "group01",
+			TableNamesOrPrefixes: []string{"test_table"},
+			Readers:              []string{username},
+			ColumnGroups: []*tableaclpb.ColumnGroupSpec{
+				{
+					Name: "test_table_id_group",
+					ColumnNamesOrPrefixes: []string {"id"},
+					Readers: []string{username},
+				},
+			},
+		}},
+	}
+	if err := tableacl.InitFromProto(config); err != nil {
+		t.Fatalf("unable to load tableacl config, error: %v", err)
+	}
+
+	tsv := newTestTabletServer(ctx, noFlags, db)
+	qre := newTestQueryExecutor(ctx, tsv, query, 0)
+	// TODO : remove this once I figure out how to attach table name to the column name in SelectExpr parsing.
+	qre.plan.Authorized = []*tableacl.ACLResult{
+		tableacl.Authorized("test_table", tableacl.READER , "id"),
+	}
+
+	//fmt.Printf("\n\t qre.plan.Authorized is %v\n",qre.plan.Authorized)
+	defer tsv.StopService()
+	assert.Equal(t, planbuilder.PlanSelect, qre.plan.PlanID)
+	got, err := qre.Execute()
+	if err != nil {
+		t.Fatalf("got: %v, want nil", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("qre.Execute() = %v, want: %v", got, want)
+	}
+}
+
+func TestQueryExecutorTableColumnAclAllowedAll(t *testing.T) {
+	aclName := fmt.Sprintf("simpleacl-test-%d", rand.Int63())
+	tableacl.Register(aclName, &simpleacl.Factory{})
+	tableacl.SetDefaultACL(aclName)
+	db := setUpQueryExecutorTest(t)
+	defer db.Close()
+	query := "select * from test_table limit 1000"
+	want := &sqltypes.Result{
+		Fields: getTestTableFields(),
+	}
+	db.AddQuery(query, want)
+	db.AddQuery("select id from test_table where 1 != 1", &sqltypes.Result{
+		Fields: getTestTableFields(),
+	})
+
+	username := "u2"
+	callerID := &querypb.VTGateCallerID{
+		Username: username,
+	}
+	ctx := callerid.NewContext(context.Background(), nil, callerID)
+	config := &tableaclpb.Config{
+		TableGroups: []*tableaclpb.TableGroupSpec{{
+			Name:                 "group01",
+			TableNamesOrPrefixes: []string{"test_table"},
+			Readers:              []string{username},
+			ColumnGroups: []*tableaclpb.ColumnGroupSpec{
+				{
+					Name: "test_table_id_group",
+					ColumnNamesOrPrefixes: []string {"%"},
+					Readers: []string{username},
+				},
+			},
+		}},
+	}
+	if err := tableacl.InitFromProto(config); err != nil {
+		t.Fatalf("unable to load tableacl config, error: %v", err)
+	}
+
+	tsv := newTestTabletServer(ctx, noFlags, db)
+	qre := newTestQueryExecutor(ctx, tsv, query, 0)
+	// TODO : remove this once I figure out how to attach table name to the column name in SelectExpr parsing.
+	qre.plan.Authorized = []*tableacl.ACLResult{
+		tableacl.Authorized("test_table", tableacl.READER , "id"),
+		tableacl.Authorized("test_table", tableacl.READER , "name"),
+		tableacl.Authorized("test_table", tableacl.READER , "customer_id"),
+	}
+
+	qre.plan.Permissions = []planbuilder.Permission{
+		{
+			TableName: "test_table",
+			ColumnName: "id",
+			Role: tableacl.READER,
+		},
+		{
+			TableName: "test_table",
+			ColumnName: "name",
+			Role: tableacl.READER,
+		},
+		{
+			TableName: "test_table",
+			ColumnName: "customer_id",
+			Role: tableacl.READER,
+		},
+	}
+
+
+	///fmt.Printf("\n\t qre.plan.Authorized is %v\n",qre.plan.Authorized)
+	//defer tsv.StopService()
+	assert.Equal(t, planbuilder.PlanSelect, qre.plan.PlanID)
+	got, err := qre.Execute()
+	if err != nil {
+		t.Fatalf("got: %v, want nil", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("qre.Execute() = %v, want: %v", got, want)
+	}
+}
+
+func TestQueryExecutorTableColumnAclFailure(t *testing.T) {
+	aclName := fmt.Sprintf("simpleacl-test-%d", rand.Int63())
+	tableacl.Register(aclName, &simpleacl.Factory{})
+	tableacl.SetDefaultACL(aclName)
+	db := setUpQueryExecutorTest(t)
+	defer db.Close()
+	query := "select * from test_table limit 1000"
+	want := &sqltypes.Result{
+		Fields: getTestTableFields(),
+	}
+	db.AddQuery(query, want)
+	db.AddQuery("select * from test_table where 1 != 1", &sqltypes.Result{
+		Fields: getTestTableFields(),
+	})
+
+	username := "u2"
+	callerID := &querypb.VTGateCallerID{
+		Username: username,
+	}
+
+	ctx := callerid.NewContext(context.Background(), nil, callerID)
+	config := &tableaclpb.Config{
+		TableGroups: []*tableaclpb.TableGroupSpec{{
+			Name:                 "group02",
+			TableNamesOrPrefixes: []string{"test_table"},
+			Readers:              []string{username},
+			ColumnGroups: []*tableaclpb.ColumnGroupSpec{
+				{
+					Name: "test_table_name_group",
+					ColumnNamesOrPrefixes: []string {"name"},
+					Readers: []string{"superuser"},
+				},
+			},
+		}},
+	}
+
+	if err := tableacl.InitFromProto(config); err != nil {
+		t.Fatalf("unable to load tableacl config, error: %v", err)
+	}
+	// without enabling Config.StrictTableAcl
+	tsv := newTestTabletServer(ctx, noFlags, db)
+	qre := newTestQueryExecutor(ctx, tsv, query, 0)
+	assert.Equal(t, planbuilder.PlanSelect, qre.plan.PlanID)
+	got, err := qre.Execute()
+	if err != nil {
+		t.Fatalf("got: %v, want nil", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("qre.Execute() = %v, want: %v", got, want)
+	}
+	tsv.StopService()
+
+	// enable Config.StrictTableAcl
+	tsv = newTestTabletServer(ctx, enableStrictTableACL, db)
+	qre = newTestQueryExecutor(ctx, tsv, query, 0)
+	defer tsv.StopService()
+	assert.Equal(t, planbuilder.PlanSelect, qre.plan.PlanID)
+	// TODO : remove this once I figure out how to attach table name to the column name in SelectExpr parsing.
+	auth := tableacl.Authorized("test_table", tableacl.READER , "name")
+	//fmt.Printf("\n\t PHANI: auth authorized to read this column is : %v\n", auth)
+	qre.plan.Authorized = []*tableacl.ACLResult{
+		auth,
+	}
+	//fmt.Printf("\n\t qre.plan.Authorized is %v\n",qre.plan.Authorized[0].ACL)
+	// query should fail because current user do not have read permissions
+	_, err = qre.Execute()
+	if err == nil {
+		t.Fatal("got: nil, want: error")
+	}
+	if code := vterrors.Code(err); code != vtrpcpb.Code_PERMISSION_DENIED {
+		t.Fatalf("qre.Execute: %v, want %v", code, vtrpcpb.Code_PERMISSION_DENIED)
+	}
+}
+
 func TestQueryExecutorTableAclNoPermission(t *testing.T) {
 	aclName := fmt.Sprintf("simpleacl-test-%d", rand.Int63())
 	tableacl.Register(aclName, &simpleacl.Factory{})
@@ -911,6 +1120,7 @@ func TestQueryExecutorTableAclNoPermission(t *testing.T) {
 	qre = newTestQueryExecutor(ctx, tsv, query, 0)
 	defer tsv.StopService()
 	assert.Equal(t, planbuilder.PlanSelect, qre.plan.PlanID)
+	//fmt.Printf("\n\t qre.plan.Authorized is %v\n",qre.plan.Authorized[0].ACL)
 	// query should fail because current user do not have read permissions
 	_, err = qre.Execute()
 	if err == nil {

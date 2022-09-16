@@ -304,6 +304,7 @@ func ValidateProto(config *tableaclpb.Config) (err error) {
 
 // Authorized returns the list of entities who have the specified role on a table.
 func Authorized(table string, role Role, column string) *ACLResult {
+	//fmt.Printf("\n\t constructing aclresult with table : %q, column : %q\n", table, column)
 	return currentTableACL.Authorized(table, role, column)
 }
 
@@ -349,7 +350,7 @@ func (tacl *tableACL) Authorized(table string, role Role, column string) *ACLRes
 }
 
 func AuthorizedForColumnAccess(tableAclEntry tableAclEntry, role Role, column string) *ACLResult {
-	fmt.Println("in AuthorizedForColumnAccess")
+	//fmt.Printf(" PHANI : in AuthorizedForColumnAccess, tableaclentry is %v, role is %v, column is %v", tableAclEntry, role, column)
 	start := 0
 	end := len(tableAclEntry.columns)
 	for start < end {

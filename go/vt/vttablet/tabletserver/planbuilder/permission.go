@@ -26,8 +26,9 @@ import (
 // Permission associates the required access permission
 // for each table.
 type Permission struct {
-	TableName string
-	Role      tableacl.Role
+	TableName  string
+	ColumnName string `json:"ColumnName,omitempty"`
+	Role       tableacl.Role
 }
 
 // BuildPermissions builds the list of required permissions for all the
@@ -71,7 +72,9 @@ func buildSubqueryPermissions(stmt sqlparser.Statement, role tableacl.Role, perm
 	_ = sqlparser.Walk(func(node sqlparser.SQLNode) (bool, error) {
 		switch node := node.(type) {
 		case *sqlparser.Select:
+
 			permissions = buildTableExprsPermissions(node.From, role, permissions)
+			permissions = buildSelectExprsPermissions(node.SelectExprs, role, permissions)
 		case sqlparser.TableExprs:
 			return false, nil
 		}
@@ -83,6 +86,29 @@ func buildSubqueryPermissions(stmt sqlparser.Statement, role tableacl.Role, perm
 func buildTableExprsPermissions(node sqlparser.TableExprs, role tableacl.Role, permissions []Permission) []Permission {
 	for _, node := range node {
 		permissions = buildTableExprPermissions(node, role, permissions)
+	}
+	return permissions
+}
+
+
+func buildSelectExprsPermissions(node sqlparser.SelectExprs, role tableacl.Role, permissions []Permission) []Permission {
+	for _, node := range node {
+		switch node := node.(type) {
+		case *sqlparser.AliasedExpr:
+			fmt.Printf("\n\t node.As is %v \n", node)
+			permissions = append(permissions, Permission{
+				ColumnName: node.ColumnName(),
+				Role:       role,
+			})
+		// we need to figure out what to do about * here
+		case *sqlparser.StarExpr:
+			permissions = append(permissions, Permission{
+				TableName: node.TableName.Name.String(),
+				ColumnName: "*",
+				Role:       role,
+			})
+		}
+
 	}
 	return permissions
 }

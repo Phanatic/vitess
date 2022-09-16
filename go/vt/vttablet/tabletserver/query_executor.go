@@ -457,6 +457,7 @@ func (qre *QueryExecutor) checkPermissions() error {
 	}
 
 	for i, auth := range qre.plan.Authorized {
+		//fmt.Printf("\n\t checking acces for auth : %v \n", auth)
 		if err := qre.checkAccess(auth, qre.plan.Permissions[i].TableName, callerID); err != nil {
 			return err
 		}
@@ -467,7 +468,9 @@ func (qre *QueryExecutor) checkPermissions() error {
 
 func (qre *QueryExecutor) checkAccess(authorized *tableacl.ACLResult, tableName string, callerID *querypb.VTGateCallerID) error {
 	statsKey := []string{tableName, authorized.GroupName, qre.plan.PlanID.String(), callerID.Username}
+	//fmt.Printf("\n\t authorized.IsMember(callerID)  is %v \n", authorized.IsMember(callerID) )
 	if !authorized.IsMember(callerID) {
+		//fmt.Println("failed permission check")
 		if qre.tsv.qe.enableTableACLDryRun {
 			qre.tsv.Stats().TableaclPseudoDenied.Add(statsKey, 1)
 			return nil

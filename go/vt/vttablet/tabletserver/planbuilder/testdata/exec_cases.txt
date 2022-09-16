@@ -48,6 +48,44 @@
   "FullQuery": "select * from a limit :#maxLimit"
 }
 
+# with column list
+"select id from a"
+{
+  "PlanID": "Select",
+  "TableName": "a",
+  "Permissions": [
+    {
+      "TableName": "a",
+      "Role": 0
+    },
+    {
+      "TableName": "a",
+      "ColumnName": "id",
+      "Role": 0
+    }
+  ],
+  "FullQuery": "select id from a limit :#maxLimit"
+}
+
+# with column list and multiple tables
+"select a.id, b.name from a, b"
+{
+  "PlanID": "Select",
+  "TableName": "a",
+  "Permissions": [
+    {
+      "TableName": "a",
+      "Role": 0
+    },
+    {
+      "TableName": "a",
+      "ColumnName": "id",
+      "Role": 0
+    }
+  ],
+  "FullQuery": "select a.id, b.name from a, b limit :#maxLimit"
+}
+
 # select with a regular where clause
 "select * from a where id=1"
 {

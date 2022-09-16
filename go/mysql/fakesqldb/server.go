@@ -747,6 +747,9 @@ func (db *DB) MockQueriesForTable(table string, result *sqltypes.Result) {
 	selectQueryPattern := fmt.Sprintf("select .* from `%s`.`%s` where 1 != 1", db.name, table)
 	db.AddQueryPattern(selectQueryPattern, result)
 
+	selectFieldQueryPattern := fmt.Sprintf("select `name` from `%s`.`%s` where 1 != 1", db.name, table)
+	db.AddQueryPattern(selectFieldQueryPattern, result)
+
 	// pattern for selecting explicit list of columns where database is not specified
 	selectQueryPattern = fmt.Sprintf("select .* from %s where 1 != 1", table)
 	db.AddQueryPattern(selectQueryPattern, result)
