@@ -90,7 +90,10 @@ func buildTableExprsPermissions(node sqlparser.TableExprs, role tableacl.Role, p
 	return permissions
 }
 
-
+// buildSelectExprsPermissions is responsible for extracting the column names that are referenced in a query
+// and building a permission set that will authorize this query.
+// QUESTION : SelectExpr doesn't have a reference to the table that the column is being selected from.
+// QUESTION : How do we handle select * here?
 func buildSelectExprsPermissions(node sqlparser.SelectExprs, role tableacl.Role, permissions []Permission) []Permission {
 	for _, node := range node {
 		switch node := node.(type) {
