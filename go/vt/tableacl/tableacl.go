@@ -44,7 +44,7 @@ type ACLResult struct {
 type columnAclEntry struct {
 	columnNameOrPrefix string
 	groupName          string
-	matchesAll bool
+	matchesAll         bool
 	acl                map[Role]acl.ACL
 }
 
@@ -205,7 +205,7 @@ func load(config *tableaclpb.Config, newACL func([]string) (acl.ACL, error)) (ta
 	return tableEntries, nil
 }
 
-func setColumnGroups(groups []*tableaclpb.ColumnGroupSpec,newACL func([]string) (acl.ACL, error)) (columnEntries columnAclEntries, err error) {
+func setColumnGroups(groups []*tableaclpb.ColumnGroupSpec, newACL func([]string) (acl.ACL, error)) (columnEntries columnAclEntries, err error) {
 
 	columnEntries = columnAclEntries{}
 	for _, group := range groups {
@@ -303,12 +303,12 @@ func ValidateProto(config *tableaclpb.Config) (err error) {
 }
 
 // Authorized returns the list of entities who have the specified role on a table.
-func Authorized(table string, role Role, column string) *ACLResult {
+func Authorized(table string, role Role, column string) []*ACLResult {
 	//fmt.Printf("\n\t constructing aclresult with table : %q, column : %q\n", table, column)
 	return currentTableACL.Authorized(table, role, column)
 }
 
-func (tacl *tableACL) Authorized(table string, role Role, column string) *ACLResult {
+func (tacl *tableACL) Authorized(table string, role Role, column string) []*ACLResult {
 	tacl.RLock()
 	defer tacl.RUnlock()
 	start := 0
@@ -331,9 +331,11 @@ func (tacl *tableACL) Authorized(table string, role Role, column string) *ACLRes
 					return AuthorizedForColumnAccess(aclEntry, role, column)
 				}
 
-				return &ACLResult{
-					ACL:       acl,
-					GroupName: aclEntry.groupName,
+				return []*ACLResult{
+					{
+						ACL:       acl,
+						GroupName: aclEntry.groupName,
+					},
 				}
 			}
 			break
@@ -343,14 +345,30 @@ func (tacl *tableACL) Authorized(table string, role Role, column string) *ACLRes
 			start = mid + 1
 		}
 	}
-	return &ACLResult{
-		ACL:       acl.DenyAllACL{},
-		GroupName: "",
+	return []*ACLResult{
+		{
+			ACL:       acl.DenyAllACL{},
+			GroupName: "",
+		},
 	}
 }
 
-func AuthorizedForColumnAccess(tableAclEntry tableAclEntry, role Role, column string) *ACLResult {
+func AuthorizedForColumnAccess(tableAclEntry tableAclEntry, role Role, column string) []*ACLResult {
 	//fmt.Printf(" PHANI : in AuthorizedForColumnAccess, tableaclentry is %v, role is %v, column is %v", tableAclEntry, role, column)
+
+	// if the query is selecting all columns,
+	// then return the ACL result for all columns in this table.
+	if column == "*" {
+		// A "select * from <table>" query requires that a user has access to all columns in the table.
+		var results []*ACLResult
+		for i := range tableAclEntry.columns {
+			results = append(results, &ACLResult{
+				ACL:       tableAclEntry.columns[i].acl[role],
+				GroupName: tableAclEntry.columns[i].groupName,
+			})
+		}
+	}
+
 	start := 0
 	end := len(tableAclEntry.columns)
 	for start < end {
@@ -360,9 +378,11 @@ func AuthorizedForColumnAccess(tableAclEntry tableAclEntry, role Role, column st
 			aclEntry := tableAclEntry.columns[mid]
 			acl, ok := aclEntry.acl[role]
 			if ok {
-				return &ACLResult{
-					ACL:       acl,
-					GroupName: aclEntry.groupName,
+				return []*ACLResult{
+					{
+						ACL:       acl,
+						GroupName: aclEntry.groupName,
+					},
 				}
 			}
 			break
@@ -372,9 +392,11 @@ func AuthorizedForColumnAccess(tableAclEntry tableAclEntry, role Role, column st
 			start = mid + 1
 		}
 	}
-	return &ACLResult{
-		ACL:       acl.DenyAllACL{},
-		GroupName: "",
+	return []*ACLResult{
+		{
+			ACL:       acl.DenyAllACL{},
+			GroupName: "",
+		},
 	}
 }
 

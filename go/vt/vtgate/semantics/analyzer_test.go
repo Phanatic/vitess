@@ -66,6 +66,18 @@ func TestBindingSingleTablePositive(t *testing.T) {
 			t1 := sel.From[0].(*sqlparser.AliasedTableExpr)
 			ts := semTable.TableSetFor(t1)
 			assert.Equal(t, SingleTableSet(0), ts)
+			tn, _ := t1.TableName()
+
+			for i := range sel.SelectExprs {
+				node := sel.SelectExprs[i]
+				switch node := node.(type) {
+				case *sqlparser.AliasedExpr:
+					fmt.Printf("\n\t table name is %v, aliased column name is %v\n", tn.Name, node.ColumnName())
+				// we need to figure out what to do about * here
+				case *sqlparser.StarExpr:
+					fmt.Printf("\n\t table name is %v, column name is %v\n", tn, "*")
+				}
+			}
 
 			recursiveDeps := semTable.RecursiveDeps(extract(sel, 0))
 			assert.Equal(t, T1, recursiveDeps, query)
@@ -186,6 +198,23 @@ func TestBindingMultiTablePositive(t *testing.T) {
 		t.Run(query.query, func(t *testing.T) {
 			stmt, semTable := parseAndAnalyze(t, query.query, "user")
 			sel, _ := stmt.(*sqlparser.Select)
+
+			for ti := range sel.From {
+				if tni, ok := sel.From[ti].(*sqlparser.AliasedTableExpr); ok {
+					tn, _ := tni.TableName()
+
+					for i := range sel.SelectExprs {
+						node := sel.SelectExprs[i]
+						switch node := node.(type) {
+						case *sqlparser.AliasedExpr:
+							fmt.Printf("\n\t table name is %v, aliased column name is %v\n", tn.Name, node.ColumnName())
+						// we need to figure out what to do about * here
+						case *sqlparser.StarExpr:
+							fmt.Printf("\n\t table name is %v, column name is %v\n", tn, "*")
+						}
+					}
+				}
+			}
 			recursiveDeps := semTable.RecursiveDeps(extract(sel, 0))
 			assert.Equal(t, query.deps, recursiveDeps, query.query)
 			assert.Equal(t, query.numberOfTables, recursiveDeps.NumberOfTables(), "number of tables is wrong")

@@ -111,7 +111,6 @@ func buildSelectExprsPermissions(node sqlparser.SelectExprs, role tableacl.Role,
 				Role:       role,
 			})
 		}
-
 	}
 	return permissions
 }

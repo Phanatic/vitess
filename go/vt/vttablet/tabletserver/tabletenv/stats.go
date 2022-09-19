@@ -42,7 +42,8 @@ type Stats struct {
 	ResultHistogram        *stats.Histogram               // Row count histograms
 	TableaclAllowed        *stats.CountersWithMultiLabels // Number of allows
 	TableaclDenied         *stats.CountersWithMultiLabels // Number of denials
-	TableaclPseudoDenied   *stats.CountersWithMultiLabels // Number of pseudo denials
+	TableaclPseudoDenied   *stats.CountersWithMultiLabels // Number of pseudo denials for table access
+	ColumnaclPseudoDenied   *stats.CountersWithMultiLabels // Number of pseudo denials for column access
 
 	UserActiveReservedCount *stats.CountersWithSingleLabel // Per CallerID active reserved connection counts
 	UserReservedCount       *stats.CountersWithSingleLabel // Per CallerID reserved connection counts
@@ -90,6 +91,7 @@ func NewStats(exporter *servenv.Exporter) *Stats {
 		TableaclAllowed:        exporter.NewCountersWithMultiLabels("TableACLAllowed", "ACL acceptances", []string{"TableName", "TableGroup", "PlanID", "Username"}),
 		TableaclDenied:         exporter.NewCountersWithMultiLabels("TableACLDenied", "ACL denials", []string{"TableName", "TableGroup", "PlanID", "Username"}),
 		TableaclPseudoDenied:   exporter.NewCountersWithMultiLabels("TableACLPseudoDenied", "ACL pseudodenials", []string{"TableName", "TableGroup", "PlanID", "Username"}),
+		ColumnaclPseudoDenied:   exporter.NewCountersWithMultiLabels("ColumnACLPseudoDenied", "Column ACL pseudodenials", []string{"TableName", "TableGroup", "PlanID", "Username", "Column"}),
 
 		UserActiveReservedCount: exporter.NewCountersWithSingleLabel("UserActiveReservedCount", "active reserved connection for each CallerID", "CallerID"),
 		UserReservedCount:       exporter.NewCountersWithSingleLabel("UserReservedCount", "reserved connection received for each CallerID", "CallerID"),
